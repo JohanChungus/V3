@@ -14,6 +14,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Fungsi untuk parsing host dari pesan
 function parseHost(msg, offset) {
   const ATYP = msg.readUInt8(offset++);
   if (ATYP === 1) { // IPv4
@@ -38,7 +39,29 @@ function parseHost(msg, offset) {
   }
 }
 
+// Menangani koneksi baru
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
+
+  // Jika menerima pong, berarti koneksi masih hidup
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
+  // Heartbeat interval untuk menjaga koneksi tetap aktif
+  const interval = setInterval(() => {
+    if (!ws.isAlive) {
+      ws.terminate(); // Terminasi jika tidak responsif
+      return;
+    }
+    ws.isAlive = false;
+    ws.ping(); // Kirim ping untuk mengecek koneksi
+  }, 30000); // Ping setiap 30 detik
+
+  ws.on('close', () => {
+    clearInterval(interval);
+  });
+
   ws.once('message', (msg) => {
     let offset = msg.readUInt8(17) + 19;
     const targetPort = msg.readUInt16BE(offset);
@@ -59,11 +82,18 @@ wss.on('connection', (ws) => {
       socket.write(msg.slice(offset));
       duplex.pipe(socket).pipe(duplex);
     });
-    socket.on('error', () => {});
-    duplex.on('error', () => {});
+
+    // Menangani error pada socket dan duplex
+    socket.on('error', (err) => {
+      console.error('Socket error:', err);
+    });
+    duplex.on('error', (err) => {
+      console.error('Duplex stream error:', err);
+    });
   });
 });
 
+// Middleware untuk autentikasi
 app.use((req, res, next) => {
   const user = auth(req);
   if (user && user.name === username && user.pass === password) {
@@ -73,6 +103,7 @@ app.use((req, res, next) => {
   res.status(401).send();
 });
 
+// Endpoint untuk menghasilkan konfigurasi
 app.get('*', (req, res) => {
   const protocol = req.protocol;
   let host = req.get('host');
@@ -90,4 +121,7 @@ app.get('*', (req, res) => {
   res.send(`<html><body><pre>${link}</pre></body></html>`);
 });
 
-server.listen(port);
+// Menjalankan server
+server.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
