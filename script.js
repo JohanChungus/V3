@@ -59,6 +59,7 @@ wss.on('connection', (ws) => {
   }, 30000); // Ping setiap 30 detik
 
   ws.on('close', () => {
+    console.log('WebSocket telah tertutup.');
     clearInterval(interval);
   });
 
@@ -71,6 +72,7 @@ wss.on('connection', (ws) => {
     try {
       ({ host, offset } = parseHost(msg, offset));
     } catch (err) {
+      console.error('Error parsing host:', err);
       ws.close();
       return;
     }
@@ -86,9 +88,17 @@ wss.on('connection', (ws) => {
     // Menangani error pada socket dan duplex
     socket.on('error', (err) => {
       console.error('Socket error:', err);
+      socket.destroy(); // Hentikan socket jika terjadi error
     });
+
     duplex.on('error', (err) => {
       console.error('Duplex stream error:', err);
+      socket.destroy(); // Hentikan socket jika duplex stream error
+    });
+
+    ws.on('close', () => {
+      console.log('WebSocket ditutup, menghentikan koneksi socket.');
+      socket.destroy(); // Hentikan socket jika WebSocket ditutup
     });
   });
 });
