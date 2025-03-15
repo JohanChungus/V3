@@ -4,7 +4,7 @@ WORKDIR /home/choreouser
 COPY / /home/choreouser/
 
 RUN apt update && apt upgrade -y
-RUN npm i ws express basic-auth
+RUN npm i ws express basic-auth dns2
 COPY . .
 
 EXPOSE 7860
