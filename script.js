@@ -9,7 +9,21 @@ const password = process.env.WEB_PASSWORD || "password";
 
 const uuid = (process.env.UUID || '37a0bd7c-8b9f-4693-8916-bd1e2da0a817').replace(/-/g, '');
 const port = process.env.PORT || 7860;
-
+// KHUSUS UNTUK NODE.JS
+const { exec } = require('child_process');
+(async () => {
+  exec('./nezha-agent &', (error, stdout, stderr) => {
+    if (error) {
+      console.error(`Error: ${error.message}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`stderr: ${stderr}`);
+      return;
+    }
+    console.log(`stdout: ${stdout}`);
+  });
+})();
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
