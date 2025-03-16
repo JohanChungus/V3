@@ -4,14 +4,6 @@ const express = require('express');
 const http = require('http');
 const auth = require("basic-auth");
 
-// Tambahkan modul dns2 untuk DoT
-const { DNSoverTLS, Packet } = require('dns2');
-const client = new DNSoverTLS({
-  dns: '7df33f.dns.nextdns.io',
-  port: 853,
-  // Jika perlu, tambahkan opsi lain seperti rejectUnauthorized
-});
-
 const username = process.env.WEB_USERNAME || "admin";
 const password = process.env.WEB_PASSWORD || "password";
 
@@ -22,18 +14,18 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Fungsi untuk parsing host dari pesan dan mengembalikan juga tipe address
+// Fungsi untuk parsing host dari pesan
 function parseHost(msg, offset) {
   const ATYP = msg.readUInt8(offset++);
   if (ATYP === 1) { // IPv4
     const ipBytes = msg.slice(offset, offset + 4);
     offset += 4;
-    return { host: Array.from(ipBytes).join('.'), offset, type: 'IPv4' };
+    return { host: Array.from(ipBytes).join('.'), offset };
   } else if (ATYP === 2) { // Domain
     const len = msg.readUInt8(offset++);
     const host = msg.slice(offset, offset + len).toString('utf8');
     offset += len;
-    return { host, offset, type: 'domain' };
+    return { host, offset };
   } else if (ATYP === 3) { // IPv6
     const ipBytes = msg.slice(offset, offset + 16);
     offset += 16;
@@ -41,30 +33,10 @@ function parseHost(msg, offset) {
     for (let j = 0; j < 16; j += 2) {
       segments.push(ipBytes.readUInt16BE(j).toString(16));
     }
-    return { host: segments.join(':'), offset, type: 'IPv6' };
+    return { host: segments.join(':'), offset };
   } else {
     throw new Error("Unsupported address type: " + ATYP);
   }
-}
-
-// Fungsi untuk membuat koneksi ke host target
-function connectToTarget(host, targetPort, msg, duplex, ws, offset) {
-  const socket = net.connect({ host, port: targetPort }, () => {
-    socket.write(msg.slice(offset));
-    duplex.pipe(socket).pipe(duplex);
-  });
-
-  socket.on('error', (err) => {
-    console.error('Socket error:', err);
-    socket.destroy();
-  });
-  duplex.on('error', (err) => {
-    console.error('Duplex stream error:', err);
-    socket.destroy();
-  });
-  ws.on('close', () => {
-    socket.destroy();
-  });
 }
 
 // Menangani koneksi baru
@@ -79,14 +51,15 @@ wss.on('connection', (ws) => {
   // Heartbeat interval untuk menjaga koneksi tetap aktif
   const interval = setInterval(() => {
     if (!ws.isAlive) {
-      ws.terminate();
+      ws.terminate(); // Terminasi jika tidak responsif
       return;
     }
     ws.isAlive = false;
-    ws.ping();
-  }, 30000);
+    ws.ping(); // Kirim ping untuk mengecek koneksi
+  }, 30000); // Ping setiap 30 detik
 
   ws.on('close', () => {
+    console.log('WebSocket telah tertutup.');
     clearInterval(interval);
   });
 
@@ -95,9 +68,9 @@ wss.on('connection', (ws) => {
     const targetPort = msg.readUInt16BE(offset);
     offset += 2;
 
-    let parsed;
+    let host;
     try {
-      parsed = parseHost(msg, offset);
+      ({ host, offset } = parseHost(msg, offset));
     } catch (err) {
       console.error('Error parsing host:', err);
       ws.close();
@@ -107,27 +80,26 @@ wss.on('connection', (ws) => {
     ws.send(Buffer.from([msg[0], 0]));
 
     const duplex = WebSocket.createWebSocketStream(ws);
+    const socket = net.connect({ host, port: targetPort }, () => {
+      socket.write(msg.slice(offset));
+      duplex.pipe(socket).pipe(duplex);
+    });
 
-    // Jika tipe adalah domain, lakukan resolusi via DoT
-    if (parsed.type === 'domain') {
-      client.resolve(parsed.host, Packet.TYPE.A)
-        .then((answer) => {
-          const aRecord = answer.answers.find(record => record.address);
-          if (!aRecord) {
-            console.error("Tidak ditemukan A record untuk domain:", parsed.host);
-            ws.close();
-            return;
-          }
-          connectToTarget(aRecord.address, targetPort, msg, duplex, ws, parsed.offset);
-        })
-        .catch((err) => {
-          console.error("Kesalahan DoT resolution:", err);
-          ws.close();
-        });
-    } else {
-      // Untuk IPv4 atau IPv6, langsung gunakan host yang telah diparsing
-      connectToTarget(parsed.host, targetPort, msg, duplex, ws, parsed.offset);
-    }
+    // Menangani error pada socket dan duplex
+    socket.on('error', (err) => {
+      console.error('Socket error:', err);
+      socket.destroy(); // Hentikan socket jika terjadi error
+    });
+
+    duplex.on('error', (err) => {
+      console.error('Duplex stream error:', err);
+      socket.destroy(); // Hentikan socket jika duplex stream error
+    });
+
+    ws.on('close', () => {
+      console.log('WebSocket ditutup, menghentikan koneksi socket.');
+      socket.destroy(); // Hentikan socket jika WebSocket ditutup
+    });
   });
 });
 
@@ -161,5 +133,5 @@ app.get('*', (req, res) => {
 
 // Menjalankan server
 server.listen(port, () => {
-  // Error saja yang akan dicatat di console jika terjadi
+  console.log(`Server running on port ${port}`);
 });
